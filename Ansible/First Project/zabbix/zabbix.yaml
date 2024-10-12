@@ -1,0 +1,185 @@
+vars:
+  zabbix_server_database: pgsql
+  zabbix_server_database_long: pgsql
+  postgresql_version: 14
+  zabbix_version: 7.0
+  zbx_server_address: 127.0.0.1
+  zbx_front_address: 127.0.0.1
+  zbx_database_address: 127.0.0.1
+  zbx_server_ip_ha: 127.0.0.1
+
+  zabbix_database_creation: True
+  zabbix_database_sqlload: True
+  db_zabbix_pass: Tg0z64OVNzFwNA== #
+  zbx_database_name: zabbix
+  zbx_database_user: zabbix
+
+  # Set postgresql state when configuration changes are made. Recommended values:
+  # `restarted` or `reloaded`
+  postgresql_restarted_state: "restarted"
+
+  postgresql_user: postgres
+  postgresql_group: postgres
+
+  postgresql_unix_socket_directories: /var/run/postgresql
+
+  postgresql_service_state: started
+  postgresql_service_enabled: true
+
+  # Databases to ensure exist.
+  postgresql_databases: []
+  # - name: exampledb # required; the rest are optional
+  #   lc_collate: # defaults to 'en_US.UTF-8'
+  #   lc_ctype: # defaults to 'en_US.UTF-8'
+  #   encoding: # defaults to 'UTF-8'
+  #   template: # defaults to 'template0'
+  #   login_host: # defaults to 'localhost'
+  #   login_password: # defaults to not set
+  #   login_user: # defaults to '{{ postgresql_user }}'
+  #   login_unix_socket: # defaults to 1st of postgresql_unix_socket_directories
+  #   port: # defaults to not set
+  #   owner: # defaults to postgresql_user
+  #   state: # defaults to 'present'
+
+  # Users to ensure exist.
+  postgresql_users: []
+  # - name: jdoe #required; the rest are optional
+  #   password: # defaults to not set
+  #   encrypted: # defaults to not set
+  #   priv: # defaults to not set
+  #   role_attr_flags: # defaults to not set
+  #   db: # defaults to not set
+  #   login_host: # defaults to 'localhost'
+  #   login_password: # defaults to not set
+  #   login_user: # defaults to '{{ postgresql_user }}'
+  #   login_unix_socket: # defaults to 1st of postgresql_unix_socket_directories
+  #   port: # defaults to not set
+  #   state: # defaults to 'present'
+
+  # Whether to output user data when managing users.
+  postgres_users_no_log: true
+
+  __postgresql_version: "15"
+  __postgresql_data_dir: "/var/lib/postgresql/{{ postgresql_version }}/main"
+  __postgresql_bin_path: "/usr/lib/postgresql/{{ postgresql_version }}/bin"
+  __postgresql_config_path: "/etc/postgresql/{{ postgresql_version }}/main"
+  __postgresql_daemon: "postgresql@{{ postgresql_version }}-main"
+  __postgresql_key: "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+  __postgresql_key_time: "https://packagecloud.io/timescale/timescaledb/gpgkey"
+  __postgresql_repo: "deb http://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main"
+  __timescaledb_repo: "deb https://packagecloud.io/timescale/timescaledb/debian/ {{ ansible_distribution_release }} main"
+  __postgresql_packages:
+    - postgresql-{{ postgresql_version }}
+    - postgresql-contrib
+    - libpq-dev
+  __postgresql_packages_timescale:
+    - timescaledb-2-postgresql-{{ postgresql_version }}
+  
+
+  postgresql_databases:
+  - name: "{{ zbx_database_name }}"
+    login_host: "{{ zbx_database_address }}"
+    login_user: "{{ postgresql_user }}"
+    login_password: ""
+
+  postgresql_users:
+  - login_host: "{{ zbx_database_address }}"
+    login_user: "{{ postgresql_user }}"
+    login_password: ""
+    name: "{{ zbx_database_user }}"
+    password: "{{ db_zabbix_pass }}"
+
+  postgresql_timescale:
+  - name: timescaledb
+    login_host: "{{ zbx_database_address }}"
+    login_user: "{{ postgresql_user }}"
+    login_password: ""
+
+  - name: restart postgresql
+  service:
+    name: "{{ postgresql_daemon }}"
+    state: "{{ postgresql_restarted_state }}"
+  
+---
+# Variable configuration.
+- include_tasks: variables.yml
+
+- include_tasks: RedHat.yml
+  when: ansible_distribution_file_variety == 'RedHat'
+
+- include_tasks: Debian.yml
+  when: ansible_distribution_file_variety == 'Debian'
+
+- include_tasks: configure.yml
+
+- name: Ensure PostgreSQL is started and enabled on boot.
+  service:
+    name: "{{ postgresql_daemon }}"
+    state: "{{ postgresql_restarted_state }}"
+    enabled: "{{ postgresql_service_enabled }}"
+
+- name: Ensure PostgreSQL users zabbix
+  postgresql_user:
+    name: "{{ item.name }}"
+    password: "{{ item.password | default(omit) }}"
+    login_host: "{{ item.login_host | default('localhost') }}"
+    login_password: "{{ item.login_password | default(omit) }}"
+    login_user: "{{ item.login_user | default(postgresql_user) }}"
+    login_unix_socket: "{{ item.login_unix_socket | default(postgresql_unix_socket_directories) }}"
+    port: "{{ item.port | default(omit) }}"
+  with_items: "{{ postgresql_users }}"
+  no_log: "{{ postgres_users_no_log }}"
+  become: true
+  become_user: "{{ postgresql_user }}"
+  vars:
+    ansible_ssh_pipelining: true
+  when:
+    - zabbix_database_sqlload
+    - zabbix_database_creation
+
+- name: Ensure PostgreSQL databases zabbix
+  postgresql_db:
+    name: "{{ item.name }}"
+    encoding: "{{ item.encoding | default('UTF-8') }}"
+    template: "{{ item.template | default('template0') }}"
+    login_host: "{{ item.login_host | default('localhost') }}"
+    login_password: "{{ item.login_password | default(omit) }}"
+    login_user: "{{ item.login_user | default(postgresql_user) }}"
+    login_unix_socket: "{{ item.login_unix_socket | default(postgresql_unix_socket_directories) }}"
+    port: "{{ item.port | default(omit) }}"
+    owner: "{{ item.owner | default(postgresql_user) }}"
+    state: "{{ item.state | default('present') }}"
+  with_items: "{{ postgresql_databases }}"
+  no_log: "{{ postgres_users_no_log }}"
+  become: true
+  become_user: "{{ postgresql_user }}"
+  vars:
+    ansible_ssh_pipelining: true
+  when:
+    - zabbix_database_sqlload
+    - zabbix_database_creation
+  
+
+- name: TIMESCALEDB | Create timescaledb extension
+  postgresql_ext:
+    name: "{{ item.name }}"
+    login_host: "{{ item.login_host | default('localhost') }}"
+    login_password: "{{ item.login_password | default(omit) }}"
+    login_user: "{{ item.login_user | default(postgresql_user) }}"
+    login_unix_socket: "{{ item.login_unix_socket | default(postgresql_unix_socket_directories) }}"
+    port: "{{ item.port | default(omit) }}"
+    db: zabbix
+    cascade: yes
+  with_items: "{{ postgresql_timescale }}"
+  no_log: "{{ postgres_users_no_log }}"
+  become: true
+  become_user: "{{ postgresql_user }}"
+  vars:
+    ansible_ssh_pipelining: true
+  when:
+    - zabbix_database_sqlload
+    - zabbix_database_creation
+
+- name: Set timezone to America/Sao_Paulo
+  timezone:
+    name: America/Sao_Paulo
