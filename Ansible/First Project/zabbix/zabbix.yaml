@@ -109,6 +109,7 @@ vars:
 
 - include_tasks: Debian.yml
   when: ansible_distribution_file_variety == 'Debian'
+dndn
 
 - include_tasks: configure.yml
 
